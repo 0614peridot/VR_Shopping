@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -33,13 +35,15 @@ public sealed class CS_CartCounter : MonoBehaviour
     [SerializeField] private Button closeButton;
 
     private readonly List<CS_CartEntry> entries = new List<CS_CartEntry>();
+    private ReadOnlyCollection<CS_CartEntry> readOnlyEntries;
     private Font uiFont;
     private int totalPriceWon;
 
     public int Count => entries.Count;
-    public IReadOnlyList<CS_CartEntry> Entries => entries;
+    public IReadOnlyList<CS_CartEntry> Entries => readOnlyEntries ??= entries.AsReadOnly();
     public int TotalPriceWon => totalPriceWon;
     public bool IsPanelOpen => cartPanel != null && cartPanel.activeSelf;
+    public event Action Changed;
 
     private void Awake()
     {
@@ -95,6 +99,22 @@ public sealed class CS_CartCounter : MonoBehaviour
         totalPriceWon += product.PriceWon;
         AddRow(entries[entries.Count - 1]);
         Refresh();
+        Changed?.Invoke();
+    }
+
+    public void Clear()
+    {
+        if (entries.Count == 0)
+        {
+            Refresh();
+            return;
+        }
+
+        entries.Clear();
+        totalPriceWon = 0;
+        ClearRows();
+        Refresh();
+        Changed?.Invoke();
     }
 
     public void TogglePanel()
@@ -253,6 +273,27 @@ public sealed class CS_CartCounter : MonoBehaviour
             TextAnchor.MiddleLeft, new Vector2(16f, 0f), new Vector2(-148f, 0f), Vector2.zero, Vector2.one);
         CreateText("Price", row.transform, FormatPrice(entry.PriceWon), 20, FontStyle.Bold, Brass,
             TextAnchor.MiddleRight, new Vector2(-16f, 0f), new Vector2(132f, 0f), new Vector2(1f, 0f), Vector2.one);
+    }
+
+    private void ClearRows()
+    {
+        if (cartContent == null)
+        {
+            return;
+        }
+
+        for (int i = cartContent.childCount - 1; i >= 0; i--)
+        {
+            GameObject row = cartContent.GetChild(i).gameObject;
+            if (Application.isPlaying)
+            {
+                Destroy(row);
+            }
+            else
+            {
+                DestroyImmediate(row);
+            }
+        }
     }
 
     private GameObject CreateBox(string objectName, Transform parent, Color color)

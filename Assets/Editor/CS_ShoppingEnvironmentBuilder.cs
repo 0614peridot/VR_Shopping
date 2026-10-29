@@ -17,7 +17,10 @@ public static class CS_ShoppingEnvironmentBuilder
     private const string MaterialFolder = "Assets/ShoppingVR/Materials";
     private const string InputFolder = "Assets/ShoppingVR/Input";
     private const int ProductLayer = 8;
+    private const float DefaultLookSensitivity = 0.16f;
+    private static readonly Vector3 ExteriorStartPosition = new Vector3(0f, 0f, -13.5f);
     private static int generatedGarmentIndex;
+    private const float CeilingLightIntensity = 26f;
 
     private static readonly Color Ink = new Color(0.08f, 0.10f, 0.13f);
     private static readonly Color WarmWhite = new Color(0.92f, 0.89f, 0.83f);
@@ -28,12 +31,172 @@ public static class CS_ShoppingEnvironmentBuilder
     static CS_ShoppingEnvironmentBuilder()
     {
         EditorApplication.delayCall += EnsureSceneExists;
+        EditorApplication.delayCall += ApplyPendingCeilingUpgrade;
+        EditorApplication.delayCall += ApplyPendingTextFreePresentation;
+    }
+
+    private static void ApplyPendingTextFreePresentation()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            EditorApplication.delayCall += ApplyPendingTextFreePresentation;
+            return;
+        }
+
+        Scene scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid() || scene.path != ScenePath)
+        {
+            return;
+        }
+
+        Canvas[] canvases = Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < canvases.Length; i++)
+        {
+            if (canvases[i].gameObject.scene == scene && canvases[i].gameObject.activeSelf)
+            {
+                RemoveAllWordingUI();
+                return;
+            }
+        }
+
+        TextMesh[] worldLabels = Object.FindObjectsByType<TextMesh>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < worldLabels.Length; i++)
+        {
+            if (worldLabels[i].gameObject.scene == scene && worldLabels[i].gameObject.activeSelf)
+            {
+                RemoveAllWordingUI();
+                return;
+            }
+        }
+    }
+
+    private static void ApplyPendingCeilingUpgrade()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            return;
+        }
+
+        Scene scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid() || scene.path != ScenePath)
+        {
+            return;
+        }
+
+        GameObject environment = GameObject.Find("Shopping Environment");
+        if (environment == null)
+        {
+            return;
+        }
+
+        Transform firstLight = environment.transform.Find("Ceiling Light 1");
+        Light light = firstLight != null ? firstLight.GetComponent<Light>() : null;
+        if (environment.transform.Find("Ceiling") == null ||
+            (light != null && !Mathf.Approximately(light.intensity, CeilingLightIntensity)))
+        {
+            ApplyCeilingAndLighting();
+        }
     }
 
     [MenuItem("ShoppingVR/Rebuild Shopping Environment")]
     public static void RebuildFromMenu()
     {
         BuildScene(true);
+    }
+
+    [MenuItem("ShoppingVR/Apply Exterior and Product Placeholders")]
+    public static void ApplyExteriorAndProductPlaceholders()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            Debug.LogWarning("Please exit Play Mode before updating the ShoppingVR scene.");
+            return;
+        }
+
+        Scene scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid() || scene.path != ScenePath)
+        {
+            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        }
+
+        GameObject environmentObject = GameObject.Find("Shopping Environment");
+        GameObject player = GameObject.Find("Player");
+        if (environmentObject == null || player == null)
+        {
+            throw new System.InvalidOperationException("ShoppingVR scene update failed: environment or player was not found.");
+        }
+
+        EnsureExterior(environmentObject.transform);
+        player.transform.position = ExteriorStartPosition;
+
+        int replacedProducts = 0;
+        CS_ProductItem[] products = Object.FindObjectsByType<CS_ProductItem>(FindObjectsInactive.Include);
+        for (int i = 0; i < products.Length; i++)
+        {
+            if (ReplaceClothingVisualWithPlaceholder(products[i]))
+            {
+                replacedProducts++;
+            }
+        }
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        AssetDatabase.SaveAssets();
+        Debug.Log($"ShoppingVR exterior added, player moved outside, and {replacedProducts} clothing products replaced with model placeholders.");
+    }
+
+    [MenuItem("ShoppingVR/Apply Ceiling and Lighting")]
+    public static void ApplyCeilingAndLighting()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            Debug.LogWarning("Please exit Play Mode before updating the ShoppingVR scene.");
+            return;
+        }
+
+        Scene scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid() || scene.path != ScenePath)
+        {
+            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        }
+
+        GameObject environmentObject = GameObject.Find("Shopping Environment");
+        if (environmentObject == null)
+        {
+            throw new System.InvalidOperationException("ShoppingVR ceiling update failed: environment was not found.");
+        }
+
+        Material ceiling = GetMaterial("M_Wall", WarmWhite, 0f, 0.65f);
+        Material fixture = GetMaterial("M_Ink", Ink, 0.25f, 0.48f);
+        Material diffuser = GetLightDiffuserMaterial();
+        EnsureCeilingAndLighting(environmentObject.transform, ceiling, fixture, diffuser);
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        AssetDatabase.SaveAssets();
+        Debug.Log("ShoppingVR ceiling and six performance-friendly recessed spotlights applied.");
+    }
+
+    [MenuItem("ShoppingVR/Remove All Wording UI")]
+    public static void RemoveAllWordingUI()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            Debug.LogWarning("Please exit Play Mode before removing the ShoppingVR wording UI.");
+            return;
+        }
+
+        Scene scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid() || scene.path != ScenePath)
+        {
+            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        }
+
+        int hiddenCanvases = HideAllWordingUI(scene);
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        AssetDatabase.SaveAssets();
+        Debug.Log($"ShoppingVR wording UI removed: {hiddenCanvases} screen canvas(es) and all world labels hidden.");
     }
 
     [MenuItem("ShoppingVR/Validate Shopping Environment")]
@@ -45,10 +208,15 @@ public static class CS_ShoppingEnvironmentBuilder
         CS_PlayerLocomotion locomotion = Object.FindFirstObjectByType<CS_PlayerLocomotion>();
         CS_FocusUIController focusUI = Object.FindFirstObjectByType<CS_FocusUIController>(FindObjectsInactive.Include);
         CS_CartCounter cart = Object.FindFirstObjectByType<CS_CartCounter>(FindObjectsInactive.Include);
+        CS_CheckoutNPC checkoutNPC = Object.FindFirstObjectByType<CS_CheckoutNPC>(FindObjectsInactive.Include);
+        CS_CheckoutUIController checkoutUI = Object.FindFirstObjectByType<CS_CheckoutUIController>(FindObjectsInactive.Include);
+        CS_PersonalShopperNPC personalShopper = Object.FindFirstObjectByType<CS_PersonalShopperNPC>(FindObjectsInactive.Include);
+        CS_PersonalShopperUI personalShopperUI = Object.FindFirstObjectByType<CS_PersonalShopperUI>(FindObjectsInactive.Include);
         EventSystem eventSystem = Object.FindFirstObjectByType<EventSystem>();
 
         if (!scene.IsValid() || products.Length < 10 || focusController == null || locomotion == null ||
-            focusUI == null || cart == null || eventSystem == null)
+            focusUI == null || cart == null || checkoutNPC == null || checkoutUI == null ||
+            personalShopper == null || personalShopperUI == null || eventSystem == null)
         {
             throw new System.InvalidOperationException("ShoppingVR scene validation failed: required environment or interaction objects are missing.");
         }
@@ -70,10 +238,22 @@ public static class CS_ShoppingEnvironmentBuilder
         ValidateReferences(focusController, "userCamera", "focusAnchor", "pointAction", "clickAction", "cancelAction",
             "locomotion", "focusUI", "cartCounter");
         ValidateReferences(locomotion, "moveAction", "lookAction", "rightClickAction", "viewTransform");
+        ValidateFloat(locomotion, "lookSensitivity", DefaultLookSensitivity);
         ValidateReferences(focusUI, "focusPanel", "productNameText", "priceText", "addToCartButton", "exitButton", "focusController");
         ValidateReferences(cart, "countText", "badgeRoot");
+        ValidateReferences(checkoutNPC, "playerTransform", "cartCounter", "checkoutUI", "interactionAction");
+        ValidateReferences(checkoutUI, "cartCounter", "promptRoot", "promptText", "promptButton", "reviewRoot",
+            "itemContent", "emptyCartText", "totalText", "shopMoreButton", "shopMoreText", "checkoutButton",
+            "checkoutText", "thankYouRoot", "thankYouText");
+        ValidateReferences(personalShopper, "player", "userCamera", "pointAction", "clickAction", "shopperUI",
+            "productFocusController");
+        ValidateReferences(personalShopperUI, "conversationPanel", "promptText", "primaryButton", "primaryButtonText",
+            "secondaryButton", "secondaryButtonText", "ambientBubble", "ambientText", "productCommentBubble",
+            "productCommentText", "shopper");
+        ValidateArrayHasReferences(personalShopper, "interactionColliders");
 
-        Debug.Log($"ShoppingVR validation passed: {products.Length} selectable products, UI/input references connected, 0 missing scripts.");
+        Debug.Log($"ShoppingVR validation passed: {products.Length} selectable products, 2 interactive NPCs, " +
+                  "UI/input references connected, 0 missing scripts.");
     }
 
     [MenuItem("ShoppingVR/Update Current Scene Components and English UI")]
@@ -97,6 +277,7 @@ public static class CS_ShoppingEnvironmentBuilder
         RepairSceneControllerReferences();
         UpdateEnglishUI();
         UpdateFocusActionLayout();
+        RepairStandaloneProductVisuals(GameObject.Find("Shopping Environment").transform);
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
@@ -140,6 +321,9 @@ public static class CS_ShoppingEnvironmentBuilder
         Material terracottaMat = GetMaterial("M_Terracotta", Terracotta, 0f, 0.55f);
         Material creamMat = GetMaterial("M_Cream", new Color(0.82f, 0.75f, 0.64f), 0f, 0.55f);
         Material glassMat = GetMaterial("M_Glass", new Color(0.25f, 0.48f, 0.55f, 0.25f), 0.35f, 0.75f);
+        Material skinMat = GetMaterial("M_NPC_Skin", new Color(0.68f, 0.45f, 0.32f), 0f, 0.62f);
+        Material hairMat = GetMaterial("M_NPC_Hair", new Color(0.055f, 0.045f, 0.04f), 0f, 0.38f);
+        Material denimMat = GetMaterial("M_NPC_Denim", new Color(0.13f, 0.24f, 0.34f), 0f, 0.42f);
 
         GameObject environment = new GameObject("Shopping Environment");
         generatedGarmentIndex = 0;
@@ -148,7 +332,8 @@ public static class CS_ShoppingEnvironmentBuilder
         BuildLeftDisplays(environment.transform, darkMat, metalMat, sageMat, terracottaMat, creamMat);
         BuildCenterDisplays(environment.transform, darkMat, metalMat, sageMat, terracottaMat, creamMat);
         BuildRightWing(environment.transform, wallMat, darkMat, metalMat, sageMat, terracottaMat, creamMat, glassMat);
-        BuildLighting(environment.transform);
+        BuildNPCVisuals(environment.transform, skinMat, hairMat, darkMat, creamMat, sageMat, terracottaMat, denimMat);
+        BuildLighting(environment.transform, darkMat, GetLightDiffuserMaterial());
 
         InputActionAsset inputAsset = AssetDatabase.LoadAssetAtPath<InputActionAsset>("Assets/InputSystem_Actions.inputactions");
         InputActionReference move = GetActionReference(inputAsset, "Player/Move");
@@ -167,7 +352,9 @@ public static class CS_ShoppingEnvironmentBuilder
 
         CS_CartCounter cartCounter;
         CS_FocusUIController focusUI;
-        BuildUI(out cartCounter, out focusUI);
+        CS_CheckoutUIController checkoutUI;
+        CS_PersonalShopperUI personalShopperUI;
+        BuildUI(out cartCounter, out focusUI, out checkoutUI, out personalShopperUI);
 
         CS_ProductFocusController focusController = player.AddComponent<CS_ProductFocusController>();
         focusController.Configure(userCamera, focusAnchor, locomotion, focusUI, cartCounter, 1 << ProductLayer);
@@ -176,13 +363,21 @@ public static class CS_ShoppingEnvironmentBuilder
         SetObjectReference(focusController, "cancelAction", cancel);
         focusUI.Configure(focusController);
 
+        Transform checkoutClerk = environment.transform.Find("NPCs/Checkout Clerk");
+        CS_CheckoutNPC checkoutNPC = checkoutClerk.gameObject.AddComponent<CS_CheckoutNPC>();
+        checkoutNPC.Configure(player.transform, cartCounter, checkoutUI, submit, 3f);
+
+        Transform personalShopper = environment.transform.Find("NPCs/Personal Shopper");
+        CapsuleCollider shopperCollider = personalShopper.GetComponent<CapsuleCollider>();
+        CS_PersonalShopperNPC personalShopperNPC = personalShopper.gameObject.AddComponent<CS_PersonalShopperNPC>();
+        personalShopperNPC.Configure(player.transform, userCamera, personalShopperUI, focusController,
+            point, click, new Collider[] { shopperCollider }, ~0);
+        SetObjectReference(personalShopperUI, "shopper", personalShopperNPC);
+
         BuildEventSystem(point, click, rightClick, cancel, navigate, submit);
         ApplySavedLayout(environment.transform);
-        RenderSettings.ambientMode = AmbientMode.Trilight;
-        RenderSettings.ambientSkyColor = new Color(0.72f, 0.74f, 0.76f);
-        RenderSettings.ambientEquatorColor = new Color(0.38f, 0.36f, 0.33f);
-        RenderSettings.ambientGroundColor = new Color(0.16f, 0.13f, 0.11f);
-        RenderSettings.ambientIntensity = 0.85f;
+        HideAllWordingUI(scene);
+        ApplyInteriorAmbient();
         RenderSettings.fog = true;
         RenderSettings.fogColor = new Color(0.68f, 0.66f, 0.62f);
         RenderSettings.fogMode = FogMode.Linear;
@@ -213,6 +408,8 @@ public static class CS_ShoppingEnvironmentBuilder
     private static void BuildShell(Transform parent, Material floor, Material wall, Material dark, Material glass)
     {
         CreateCube("Floor", new Vector3(0f, -0.15f, 0f), new Vector3(28f, 0.3f, 18f), floor, parent);
+        CreateCube("Ceiling", new Vector3(0f, 5.1f, 0f), new Vector3(28f, 0.2f, 18f), wall, parent);
+        BuildExterior(parent, floor, dark);
         CreateCube("Rear Wall", new Vector3(0f, 2.5f, 9f), new Vector3(28f, 5f, 0.3f), wall, parent);
         CreateCube("Left Wall", new Vector3(-14f, 2.5f, 0f), new Vector3(0.3f, 5f, 18f), wall, parent);
         CreateCube("Right Wall", new Vector3(14f, 2.5f, 0f), new Vector3(0.3f, 5f, 18f), wall, parent);
@@ -228,6 +425,29 @@ public static class CS_ShoppingEnvironmentBuilder
         Object.DestroyImmediate(doorR.GetComponent<Collider>());
 
         CreateWorldLabel("SHOP / EDIT", new Vector3(0f, 4.35f, -8.78f), Quaternion.Euler(0f, 180f, 0f), 0.55f, WarmWhite, parent);
+    }
+
+    private static void BuildExterior(Transform parent, Material floor, Material dark)
+    {
+        CreateCube("Exterior Ground", new Vector3(0f, -0.15f, -15f), new Vector3(28f, 0.3f, 12f), floor, parent);
+        CreateCube("Exterior Boundary Left", new Vector3(-13.85f, 0.2f, -15f), new Vector3(0.3f, 0.4f, 12f), dark, parent);
+        CreateCube("Exterior Boundary Right", new Vector3(13.85f, 0.2f, -15f), new Vector3(0.3f, 0.4f, 12f), dark, parent);
+        CreateCube("Exterior Boundary Front", new Vector3(0f, 0.2f, -20.85f), new Vector3(28f, 0.4f, 0.3f), dark, parent);
+    }
+
+    private static void EnsureExterior(Transform environment)
+    {
+        if (environment.Find("Exterior Ground") != null)
+        {
+            return;
+        }
+
+        Transform interiorFloor = environment.Find("Floor");
+        Renderer floorRenderer = interiorFloor != null ? interiorFloor.GetComponent<Renderer>() : null;
+        Material floor = floorRenderer != null ? floorRenderer.sharedMaterial :
+            GetMaterial("M_Floor", new Color(0.48f, 0.35f, 0.24f), 0f, 0.23f);
+        Material dark = GetMaterial("M_Ink", Ink, 0.25f, 0.48f);
+        BuildExterior(environment, floor, dark);
     }
 
     private static void BuildBackWall(Transform parent, Material wall, Material dark, Material sage, Material metal)
@@ -309,10 +529,94 @@ public static class CS_ShoppingEnvironmentBuilder
         CreateWorldLabel("OBJECTS", new Vector3(5.15f, 0.72f, -8.43f), Quaternion.identity, 0.28f, WarmWhite, parent);
     }
 
+    private static void BuildNPCVisuals(Transform parent, Material skin, Material hair, Material dark,
+        Material cream, Material sage, Material terracotta, Material denim)
+    {
+        GameObject npcRoot = new GameObject("NPCs");
+        npcRoot.transform.SetParent(parent, false);
+
+        CreateHumanoid("Checkout Clerk", new Vector3(0.3f, 0f, 7.45f), Quaternion.Euler(0f, 180f, 0f),
+            sage, dark, skin, hair, cream, cream, npcRoot.transform, true);
+        CreateHumanoid("Personal Shopper", new Vector3(-11.85f, 0f, -5.65f), Quaternion.Euler(0f, 45f, 0f),
+            terracotta, denim, skin, hair, dark, cream, npcRoot.transform, false);
+    }
+
+    private static GameObject CreateHumanoid(string name, Vector3 position, Quaternion rotation,
+        Material top, Material trousers, Material skin, Material hair, Material shoes, Material accent,
+        Transform parent, bool wearsApron)
+    {
+        GameObject root = new GameObject(name);
+        root.transform.SetParent(parent, false);
+        root.transform.position = position;
+        root.transform.rotation = rotation;
+
+        CapsuleCollider interactionCollider = root.AddComponent<CapsuleCollider>();
+        interactionCollider.center = new Vector3(0f, 1.075f, 0f);
+        interactionCollider.height = 2.15f;
+        interactionCollider.radius = 0.4f;
+
+        CreateNPCPart(PrimitiveType.Capsule, "Torso", new Vector3(0f, 1.18f, 0f),
+            new Vector3(0.42f, 0.43f, 0.27f), top, root.transform);
+        CreateNPCPart(PrimitiveType.Sphere, "Head", new Vector3(0f, 1.82f, 0f),
+            new Vector3(0.46f, 0.52f, 0.44f), skin, root.transform);
+        CreateNPCPart(PrimitiveType.Sphere, "Hair", new Vector3(0f, 2.02f, 0.015f),
+            new Vector3(0.49f, 0.28f, 0.47f), hair, root.transform);
+        CreateNPCPart(PrimitiveType.Sphere, "Left Eye", new Vector3(-0.105f, 1.87f, 0.208f),
+            new Vector3(0.052f, 0.052f, 0.035f), hair, root.transform);
+        CreateNPCPart(PrimitiveType.Sphere, "Right Eye", new Vector3(0.105f, 1.87f, 0.208f),
+            new Vector3(0.052f, 0.052f, 0.035f), hair, root.transform);
+
+        GameObject leftArm = CreateNPCPart(PrimitiveType.Capsule, "Left Arm", new Vector3(-0.39f, 1.2f, 0f),
+            new Vector3(0.13f, 0.37f, 0.13f), top, root.transform);
+        leftArm.transform.localRotation = Quaternion.Euler(0f, 0f, -8f);
+        GameObject rightArm = CreateNPCPart(PrimitiveType.Capsule, "Right Arm", new Vector3(0.39f, 1.2f, 0f),
+            new Vector3(0.13f, 0.37f, 0.13f), top, root.transform);
+        rightArm.transform.localRotation = Quaternion.Euler(0f, 0f, 8f);
+        CreateNPCPart(PrimitiveType.Sphere, "Left Hand", new Vector3(-0.44f, 0.87f, 0f),
+            new Vector3(0.2f, 0.2f, 0.2f), skin, root.transform);
+        CreateNPCPart(PrimitiveType.Sphere, "Right Hand", new Vector3(0.44f, 0.87f, 0f),
+            new Vector3(0.2f, 0.2f, 0.2f), skin, root.transform);
+
+        CreateNPCPart(PrimitiveType.Capsule, "Left Leg", new Vector3(-0.17f, 0.5f, 0f),
+            new Vector3(0.16f, 0.42f, 0.16f), trousers, root.transform);
+        CreateNPCPart(PrimitiveType.Capsule, "Right Leg", new Vector3(0.17f, 0.5f, 0f),
+            new Vector3(0.16f, 0.42f, 0.16f), trousers, root.transform);
+        CreateNPCPart(PrimitiveType.Cube, "Left Shoe", new Vector3(-0.17f, 0.1f, 0.06f),
+            new Vector3(0.28f, 0.16f, 0.48f), shoes, root.transform);
+        CreateNPCPart(PrimitiveType.Cube, "Right Shoe", new Vector3(0.17f, 0.1f, 0.06f),
+            new Vector3(0.28f, 0.16f, 0.48f), shoes, root.transform);
+
+        if (wearsApron)
+        {
+            CreateNPCPart(PrimitiveType.Cube, "Apron", new Vector3(0f, 1.06f, 0.245f),
+                new Vector3(0.55f, 0.7f, 0.035f), accent, root.transform);
+        }
+        else
+        {
+            CreateNPCPart(PrimitiveType.Cube, "Name Badge", new Vector3(0.19f, 1.35f, 0.255f),
+                new Vector3(0.22f, 0.11f, 0.025f), accent, root.transform);
+        }
+
+        return root;
+    }
+
+    private static GameObject CreateNPCPart(PrimitiveType type, string name, Vector3 localPosition,
+        Vector3 localScale, Material material, Transform parent)
+    {
+        GameObject part = GameObject.CreatePrimitive(type);
+        part.name = name;
+        part.transform.SetParent(parent, false);
+        part.transform.localPosition = localPosition;
+        part.transform.localScale = localScale;
+        part.GetComponent<Renderer>().sharedMaterial = material;
+        Object.DestroyImmediate(part.GetComponent<Collider>());
+        return part;
+    }
+
     private static GameObject BuildPlayer(InputActionReference move, InputActionReference look, InputActionReference rightClick)
     {
         GameObject player = new GameObject("Player");
-        player.transform.position = new Vector3(0f, 0f, -6.4f);
+        player.transform.position = ExteriorStartPosition;
         CharacterController controller = player.AddComponent<CharacterController>();
         controller.height = 1.75f;
         controller.radius = 0.32f;
@@ -337,10 +641,12 @@ public static class CS_ShoppingEnvironmentBuilder
         SetObjectReference(locomotion, "lookAction", look);
         SetObjectReference(locomotion, "rightClickAction", rightClick);
         SetObjectReference(locomotion, "viewTransform", cameraObject.transform);
+        SetFloat(locomotion, "lookSensitivity", DefaultLookSensitivity);
         return player;
     }
 
-    private static void BuildUI(out CS_CartCounter cartCounter, out CS_FocusUIController focusUI)
+    private static void BuildUI(out CS_CartCounter cartCounter, out CS_FocusUIController focusUI,
+        out CS_CheckoutUIController checkoutUI, out CS_PersonalShopperUI personalShopperUI)
     {
         Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         GameObject canvasObject = new GameObject("Shopping UI", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
@@ -404,6 +710,160 @@ public static class CS_ShoppingEnvironmentBuilder
         SetObjectReference(focusUI, "addToCartButton", cartButton);
         SetObjectReference(focusUI, "exitButton", exitButton);
         focusPanel.SetActive(false);
+
+        checkoutUI = BuildCheckoutUI(canvasObject.transform, font, cartCounter);
+        personalShopperUI = BuildPersonalShopperUI(canvasObject.transform, font);
+    }
+
+    private static CS_CheckoutUIController BuildCheckoutUI(Transform canvas, Font font, CS_CartCounter cartCounter)
+    {
+        GameObject controllerObject = new GameObject("Checkout UI Controller");
+        controllerObject.transform.SetParent(canvas, false);
+        CS_CheckoutUIController controller = controllerObject.AddComponent<CS_CheckoutUIController>();
+
+        Button promptButton = CreateUIButton("Checkout Prompt", canvas, "Check out?", font,
+            new Vector2(0f, 172f), new Vector2(300f, 72f), new Vector2(0.5f, 0f),
+            new Vector2(0.5f, 0f), Terracotta);
+        Text promptText = promptButton.transform.Find("Label").GetComponent<Text>();
+
+        GameObject reviewRoot = CreateUIBox("Checkout Review", canvas, new Color(0.02f, 0.025f, 0.03f, 0.78f),
+            Vector2.zero, Vector2.zero, Vector2.zero, Vector2.one);
+        Stretch(reviewRoot.GetComponent<RectTransform>());
+        GameObject reviewPanel = CreateUIBox("Review Panel", reviewRoot.transform, new Color(0.04f, 0.05f, 0.06f, 0.98f),
+            Vector2.zero, new Vector2(700f, 690f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+        CreateUIText("Title", reviewPanel.transform, "REVIEW YOUR CART", font, 34, WarmWhite,
+            TextAnchor.MiddleCenter, new Vector2(0f, -38f), new Vector2(-48f, 64f),
+            new Vector2(0f, 1f), Vector2.one);
+
+        GameObject divider = CreateUIBox("Header Divider", reviewPanel.transform, Terracotta,
+            new Vector2(0f, -88f), new Vector2(-48f, 2f), new Vector2(0f, 1f), Vector2.one);
+        divider.GetComponent<Image>().raycastTarget = false;
+
+        GameObject viewport = CreateUIBox("Viewport", reviewPanel.transform, Color.clear, Vector2.zero,
+            Vector2.zero, Vector2.zero, Vector2.one);
+        RectTransform viewportRect = viewport.GetComponent<RectTransform>();
+        viewportRect.offsetMin = new Vector2(32f, 178f);
+        viewportRect.offsetMax = new Vector2(-32f, -108f);
+        viewport.AddComponent<RectMask2D>();
+
+        GameObject contentObject = new GameObject("Checkout Items", typeof(RectTransform),
+            typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+        contentObject.transform.SetParent(viewport.transform, false);
+        RectTransform itemContent = contentObject.GetComponent<RectTransform>();
+        itemContent.anchorMin = new Vector2(0f, 1f);
+        itemContent.anchorMax = Vector2.one;
+        itemContent.pivot = new Vector2(0.5f, 1f);
+        itemContent.anchoredPosition = Vector2.zero;
+        itemContent.sizeDelta = Vector2.zero;
+        VerticalLayoutGroup layout = contentObject.GetComponent<VerticalLayoutGroup>();
+        layout.spacing = 8f;
+        layout.childControlHeight = true;
+        layout.childControlWidth = true;
+        layout.childForceExpandHeight = false;
+        layout.childForceExpandWidth = true;
+        contentObject.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        ScrollRect scrollRect = viewport.AddComponent<ScrollRect>();
+        scrollRect.content = itemContent;
+        scrollRect.viewport = viewportRect;
+        scrollRect.horizontal = false;
+        scrollRect.vertical = true;
+        scrollRect.movementType = ScrollRect.MovementType.Clamped;
+        scrollRect.scrollSensitivity = 28f;
+
+        Text emptyText = CreateUIText("Empty Cart", viewport.transform, "Your cart is empty", font, 22,
+            new Color(WarmWhite.r, WarmWhite.g, WarmWhite.b, 0.68f), TextAnchor.MiddleCenter,
+            Vector2.zero, Vector2.zero, Vector2.zero, Vector2.one);
+        Text totalText = CreateUIText("Checkout Total", reviewPanel.transform, "TOTAL   $0.00", font, 25,
+            Brass, TextAnchor.MiddleRight, new Vector2(166f, 126f), new Vector2(290f, 40f),
+            new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
+
+        Button shopMoreButton = CreateUIButton("Shop More", reviewPanel.transform, "SHOP MORE", font,
+            new Vector2(-166f, 42f), new Vector2(290f, 72f), new Vector2(0.5f, 0f),
+            new Vector2(0.5f, 0f), new Color(0.12f, 0.13f, 0.15f, 1f));
+        Button checkoutButton = CreateUIButton("Confirm Checkout", reviewPanel.transform, "CHECK OUT", font,
+            new Vector2(166f, 42f), new Vector2(290f, 72f), new Vector2(0.5f, 0f),
+            new Vector2(0.5f, 0f), Terracotta);
+
+        GameObject thankYouRoot = CreateUIBox("Checkout Thanks", canvas, new Color(0.04f, 0.05f, 0.06f, 0.97f),
+            Vector2.zero, new Vector2(540f, 116f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+        Text thankYouText = CreateUIText("Message", thankYouRoot.transform, "Thanks for shopping!", font, 30,
+            WarmWhite, TextAnchor.MiddleCenter, Vector2.zero, new Vector2(-36f, -24f), Vector2.zero, Vector2.one);
+
+        SetObjectReference(controller, "cartCounter", cartCounter);
+        SetObjectReference(controller, "promptRoot", promptButton.gameObject);
+        SetObjectReference(controller, "promptText", promptText);
+        SetObjectReference(controller, "promptButton", promptButton);
+        SetObjectReference(controller, "reviewRoot", reviewRoot);
+        SetObjectReference(controller, "itemContent", itemContent);
+        SetObjectReference(controller, "emptyCartText", emptyText);
+        SetObjectReference(controller, "totalText", totalText);
+        SetObjectReference(controller, "shopMoreButton", shopMoreButton);
+        SetObjectReference(controller, "shopMoreText", shopMoreButton.transform.Find("Label").GetComponent<Text>());
+        SetObjectReference(controller, "checkoutButton", checkoutButton);
+        SetObjectReference(controller, "checkoutText", checkoutButton.transform.Find("Label").GetComponent<Text>());
+        SetObjectReference(controller, "thankYouRoot", thankYouRoot);
+        SetObjectReference(controller, "thankYouText", thankYouText);
+
+        promptButton.gameObject.SetActive(false);
+        reviewRoot.SetActive(false);
+        thankYouRoot.SetActive(false);
+        return controller;
+    }
+
+    private static CS_PersonalShopperUI BuildPersonalShopperUI(Transform canvas, Font font)
+    {
+        GameObject controllerObject = new GameObject("Personal Shopper UI Controller");
+        controllerObject.transform.SetParent(canvas, false);
+        CS_PersonalShopperUI controller = controllerObject.AddComponent<CS_PersonalShopperUI>();
+
+        GameObject conversation = CreateUIBox("Shopper Conversation", canvas,
+            new Color(0.04f, 0.05f, 0.06f, 0.98f), new Vector2(0f, -74f), new Vector2(680f, 300f),
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+        Text prompt = CreateUIText("Prompt", conversation.transform, "How can I help?", font, 32,
+            WarmWhite, TextAnchor.MiddleCenter, new Vector2(0f, -48f), new Vector2(-48f, 72f),
+            new Vector2(0f, 1f), Vector2.one);
+        Button primaryButton = CreateUIButton("Primary Choice", conversation.transform,
+            "Help me choose an outfit!", font, new Vector2(0f, 104f), new Vector2(580f, 70f),
+            new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), Terracotta);
+        Text primaryLabel = primaryButton.transform.Find("Label").GetComponent<Text>();
+        Button secondaryButton = CreateUIButton("Secondary Choice", conversation.transform, "Never mind", font,
+            new Vector2(0f, 28f), new Vector2(580f, 58f), new Vector2(0.5f, 0f),
+            new Vector2(0.5f, 0f), new Color(0.12f, 0.13f, 0.15f, 1f));
+        Text secondaryLabel = secondaryButton.transform.Find("Label").GetComponent<Text>();
+
+        GameObject ambientBubble = CreateUIBox("Shopper Ambient Bubble", canvas,
+            new Color(0.04f, 0.05f, 0.06f, 0.94f), new Vector2(34f, 128f), new Vector2(440f, 88f),
+            new Vector2(0f, 0f), new Vector2(0f, 0f));
+        Text ambientText = CreateUIText("Ambient Message", ambientBubble.transform,
+            "Welcome to the shop!", font, 23, WarmWhite, TextAnchor.MiddleLeft,
+            new Vector2(22f, 0f), new Vector2(-36f, -18f), Vector2.zero, Vector2.one);
+        CreateSpeechTail(ambientBubble.transform, new Vector2(24f, -52f), darkFacingDown: true);
+
+        GameObject commentBubble = CreateUIBox("Product Comment Bubble", canvas,
+            new Color(0.04f, 0.05f, 0.06f, 0.96f), new Vector2(38f, 0f), new Vector2(430f, 190f),
+            new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+        Text commentText = CreateUIText("Product Comment", commentBubble.transform,
+            "That piece is a flexible choice.", font, 24, WarmWhite, TextAnchor.MiddleLeft,
+            new Vector2(24f, 0f), new Vector2(-46f, -34f), Vector2.zero, Vector2.one);
+        CreateSpeechTail(commentBubble.transform, new Vector2(14f, 0f), darkFacingDown: false);
+
+        controller.Configure(null, conversation, prompt, primaryButton, primaryLabel, secondaryButton,
+            secondaryLabel, ambientBubble, ambientText, commentBubble, commentText);
+        conversation.SetActive(false);
+        ambientBubble.SetActive(false);
+        commentBubble.SetActive(false);
+        return controller;
+    }
+
+    private static void CreateSpeechTail(Transform parent, Vector2 position, bool darkFacingDown)
+    {
+        GameObject tail = CreateUIBox("Speech Tail", parent, new Color(0.04f, 0.05f, 0.06f, 0.96f),
+            position, new Vector2(28f, 28f), darkFacingDown ? new Vector2(0f, 0f) : new Vector2(1f, 0.5f),
+            darkFacingDown ? new Vector2(0f, 0f) : new Vector2(1f, 0.5f));
+        RectTransform rect = tail.GetComponent<RectTransform>();
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.localRotation = Quaternion.Euler(0f, 0f, 45f);
+        tail.GetComponent<Image>().raycastTarget = false;
     }
 
     private static void BuildEventSystem(InputActionReference point, InputActionReference click,
@@ -419,22 +879,18 @@ public static class CS_ShoppingEnvironmentBuilder
         module.submit = submit;
     }
 
-    private static void BuildLighting(Transform parent)
+    private static void BuildLighting(Transform parent, Material fixture, Material diffuser)
     {
         GameObject sunObject = new GameObject("Sun");
         sunObject.transform.SetParent(parent, false);
         sunObject.transform.rotation = Quaternion.Euler(48f, -35f, 0f);
         Light sun = sunObject.AddComponent<Light>();
         sun.type = LightType.Directional;
-        sun.intensity = 1.15f;
+        sun.intensity = 0.35f;
         sun.color = new Color(1f, 0.91f, 0.78f);
-        sun.shadows = LightShadows.Soft;
+        sun.shadows = LightShadows.None;
 
-        Vector3[] positions =
-        {
-            new Vector3(-8f, 4.6f, 3f), new Vector3(0f, 4.6f, 3f), new Vector3(8f, 4.6f, 3f),
-            new Vector3(-8f, 4.6f, -4f), new Vector3(0f, 4.6f, -4f), new Vector3(8f, 4.6f, -4f)
-        };
+        Vector3[] positions = GetCeilingLightPositions();
         for (int i = 0; i < positions.Length; i++)
         {
             GameObject lightObject = new GameObject("Ceiling Light " + (i + 1));
@@ -443,34 +899,138 @@ public static class CS_ShoppingEnvironmentBuilder
             lightObject.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
             Light light = lightObject.AddComponent<Light>();
             light.type = LightType.Spot;
-            light.range = 12f;
-            light.spotAngle = 78f;
-            light.intensity = 8f;
-            light.color = new Color(1f, 0.82f, 0.64f);
+            ConfigureCeilingLight(light);
             light.shadows = LightShadows.None;
+            CreateCeilingFixture(i + 1, positions[i], fixture, diffuser, parent);
         }
+    }
+
+    private static int HideAllWordingUI(Scene scene)
+    {
+        int hiddenCanvases = 0;
+        Canvas[] canvases = Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < canvases.Length; i++)
+        {
+            if (canvases[i].gameObject.scene != scene)
+            {
+                continue;
+            }
+
+            canvases[i].gameObject.SetActive(false);
+            hiddenCanvases++;
+        }
+
+        TextMesh[] worldLabels = Object.FindObjectsByType<TextMesh>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < worldLabels.Length; i++)
+        {
+            if (worldLabels[i].gameObject.scene == scene)
+            {
+                worldLabels[i].gameObject.SetActive(false);
+            }
+        }
+
+        return hiddenCanvases;
+    }
+
+    private static void EnsureCeilingAndLighting(Transform environment, Material ceiling,
+        Material fixture, Material diffuser)
+    {
+        if (environment.Find("Ceiling") == null)
+        {
+            CreateCube("Ceiling", new Vector3(0f, 5.1f, 0f), new Vector3(28f, 0.2f, 18f),
+                ceiling, environment);
+        }
+
+        Transform sunTransform = environment.Find("Sun");
+        Light sun = sunTransform != null ? sunTransform.GetComponent<Light>() : null;
+        if (sun != null)
+        {
+            sun.intensity = 0.35f;
+            sun.shadows = LightShadows.None;
+        }
+
+        Vector3[] positions = GetCeilingLightPositions();
+        for (int i = 0; i < positions.Length; i++)
+        {
+            Transform lightTransform = environment.Find("Ceiling Light " + (i + 1));
+            if (lightTransform != null)
+            {
+                lightTransform.position = positions[i];
+                lightTransform.rotation = Quaternion.Euler(90f, 0f, 0f);
+                ConfigureCeilingLight(lightTransform.GetComponent<Light>());
+            }
+
+            Transform fixtureTransform = environment.Find("Ceiling Fixture " + (i + 1));
+            if (fixtureTransform == null)
+            {
+                CreateCeilingFixture(i + 1, positions[i], fixture, diffuser, environment);
+            }
+            else
+            {
+                Renderer lens = fixtureTransform.Find("Diffuser")?.GetComponent<Renderer>();
+                if (lens != null)
+                {
+                    lens.sharedMaterial = diffuser;
+                }
+            }
+        }
+
+        ApplyInteriorAmbient();
+    }
+
+    private static void ApplyInteriorAmbient()
+    {
+        // Darker ambient lets the warm spot pools read on the floor and racks.
+        RenderSettings.ambientMode = AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.42f, 0.43f, 0.45f);
+        RenderSettings.ambientEquatorColor = new Color(0.24f, 0.22f, 0.2f);
+        RenderSettings.ambientGroundColor = new Color(0.1f, 0.08f, 0.07f);
+    }
+
+    private static Vector3[] GetCeilingLightPositions()
+    {
+        return new[]
+        {
+            new Vector3(-8f, 4.6f, 3f), new Vector3(0f, 4.6f, 3f), new Vector3(8f, 4.6f, 3f),
+            new Vector3(-8f, 4.6f, -4f), new Vector3(0f, 4.6f, -4f), new Vector3(8f, 4.6f, -4f)
+        };
+    }
+
+    private static void ConfigureCeilingLight(Light light)
+    {
+        if (light == null)
+        {
+            return;
+        }
+
+        light.type = LightType.Spot;
+        light.range = 9f;
+        light.spotAngle = 95f;
+        light.innerSpotAngle = 55f;
+        light.intensity = CeilingLightIntensity;
+        light.color = new Color(1f, 0.86f, 0.72f);
+        light.shadows = LightShadows.None;
+    }
+
+    private static void CreateCeilingFixture(int index, Vector3 lightPosition, Material fixture,
+        Material diffuser, Transform parent)
+    {
+        GameObject root = new GameObject("Ceiling Fixture " + index);
+        root.transform.SetParent(parent, false);
+        root.transform.position = new Vector3(lightPosition.x, 4.92f, lightPosition.z);
+
+        GameObject trim = CreateCylinder("Trim", Vector3.zero, new Vector3(0.42f, 0.06f, 0.42f),
+            fixture, root.transform, true);
+        GameObject lens = CreateCylinder("Diffuser", new Vector3(0f, -0.08f, 0f),
+            new Vector3(0.31f, 0.025f, 0.31f), diffuser, root.transform, true);
+        Object.DestroyImmediate(trim.GetComponent<Collider>());
+        Object.DestroyImmediate(lens.GetComponent<Collider>());
     }
 
     private static void ApplySavedLayout(Transform environment)
     {
         // Preserve the layout adjustments made in the Unity editor when the scene is rebuilt.
-        Vector3 productPartOffset = new Vector3(0.13f, 2.8f, -0.06f);
-        string[] productNames =
-        {
-            "Ivory Knit", "Sage Overshirt", "Clay Jacket", "Cream Blouse", "Charcoal Coat",
-            "Studio Tote", "Midnight Shirt", "Sand Cardigan", "Arc Mini Bag", "Terracotta Case"
-        };
-        foreach (string productName in productNames)
-        {
-            Transform product = environment.Find(productName);
-            foreach (Transform part in product)
-            {
-                part.position += productPartOffset;
-            }
-        }
-
-        environment.Find("Sun").position = productPartOffset;
-        Object.FindFirstObjectByType<EventSystem>().transform.position = productPartOffset;
+        RepairStandaloneProductVisuals(environment);
 
         SetCabinetParts(environment, "Display Cabinet A", new Vector3(0f, 0f, 3.04f), new Vector3(0f, 0.1f, 2.65f));
         SetCabinetParts(environment, "Display Cabinet B", new Vector3(-8.87f, 0f, 0.32f), new Vector3(-8.87f, 0.1f, 0.03f));
@@ -517,7 +1077,11 @@ public static class CS_ShoppingEnvironmentBuilder
         Transform fittingLabel = environment.Find("FITTING Label");
         fittingLabel.position = new Vector3(10.5f, 3.7f, 3.44f);
         fittingLabel.rotation = Quaternion.identity;
-        environment.Find("NEW / FORM Label").rotation = Quaternion.identity;
+        Transform newFormLabel = FindDescendantOrNull(environment, "NEW / FORM Label");
+        if (newFormLabel != null)
+        {
+            newFormLabel.rotation = Quaternion.identity;
+        }
         foreach (Transform child in environment)
         {
             if (child.name == "SHOP / EDIT Label" && child.position.z > 0f)
@@ -526,6 +1090,62 @@ public static class CS_ShoppingEnvironmentBuilder
                 break;
             }
         }
+    }
+
+    private static void RepairStandaloneProductVisuals(Transform environment)
+    {
+        // Standalone products use their root as the authored display pivot. Keep procedural
+        // visual parts local to that root so the mesh stays on its plinth/rack in Explore mode.
+        string[] shirtNames =
+        {
+            "Ivory Knit", "Sage Overshirt", "Clay Jacket", "Cream Blouse", "Charcoal Coat",
+            "Midnight Shirt", "Sand Cardigan"
+        };
+        for (int i = 0; i < shirtNames.Length; i++)
+        {
+            Transform shirt = environment.Find(shirtNames[i]);
+            if (shirt == null)
+            {
+                continue;
+            }
+
+            Transform placeholder = shirt.Find("Model Placeholder");
+            if (placeholder != null)
+            {
+                placeholder.localPosition = Vector3.zero;
+                continue;
+            }
+
+            SetLocalPosition(shirt, "Torso", Vector3.zero);
+            SetLocalPosition(shirt, "Sleeve L", new Vector3(-0.62f, 0.27f, 0f));
+            SetLocalPosition(shirt, "Sleeve R", new Vector3(0.62f, 0.27f, 0f));
+            SetLocalPosition(shirt, "Collar", new Vector3(0f, 0.62f, 0f));
+        }
+
+        string[] bagNames = { "Studio Tote", "Arc Mini Bag", "Terracotta Case" };
+        for (int i = 0; i < bagNames.Length; i++)
+        {
+            Transform bag = environment.Find(bagNames[i]);
+            SetLocalPosition(bag, "Bag Body", Vector3.zero);
+            SetLocalPosition(bag, "Handle L", new Vector3(-0.36f, 0.55f, 0f));
+            SetLocalPosition(bag, "Handle R", new Vector3(0.36f, 0.55f, 0f));
+        }
+    }
+
+    private static void SetLocalPosition(Transform parent, string childName, Vector3 localPosition)
+    {
+        if (parent == null)
+        {
+            throw new System.InvalidOperationException($"ShoppingVR layout repair failed: product '{childName}' parent was not found.");
+        }
+
+        Transform child = parent.Find(childName);
+        if (child == null)
+        {
+            throw new System.InvalidOperationException($"ShoppingVR layout repair failed: '{parent.name}/{childName}' was not found.");
+        }
+
+        child.localPosition = localPosition;
     }
 
     private static void SetCabinetParts(Transform environment, string cabinetName, Vector3 bodyPosition,
@@ -595,9 +1215,7 @@ public static class CS_ShoppingEnvironmentBuilder
         GameObject root = new GameObject(name);
         root.transform.SetParent(parent, false);
         root.transform.localPosition = localPosition;
-        CreateCube("Body", Vector3.zero, new Vector3(0.48f, 1.1f, 0.16f), material, root.transform, true);
-        CreateCube("Sleeve L", new Vector3(-0.34f, 0.28f, 0f), new Vector3(0.25f, 0.65f, 0.16f), material, root.transform, true).transform.localRotation = Quaternion.Euler(0f, 0f, -18f);
-        CreateCube("Sleeve R", new Vector3(0.34f, 0.28f, 0f), new Vector3(0.25f, 0.65f, 0.16f), material, root.transform, true).transform.localRotation = Quaternion.Euler(0f, 0f, 18f);
+        CreateCube("Model Placeholder", Vector3.zero, new Vector3(0.48f, 1.1f, 0.16f), material, root.transform, true);
         string displayName = parent.name + " " + name;
         int price = 59000 + (generatedGarmentIndex % 8) * 10000;
         generatedGarmentIndex++;
@@ -683,6 +1301,7 @@ public static class CS_ShoppingEnvironmentBuilder
         SetObjectReference(locomotion, "lookAction", look);
         SetObjectReference(locomotion, "rightClickAction", rightClick);
         SetObjectReference(locomotion, "viewTransform", userCamera.transform);
+        SetFloat(locomotion, "lookSensitivity", DefaultLookSensitivity);
 
         focusController.Configure(userCamera, focusAnchor, locomotion, focusUI, cart, 1 << ProductLayer);
         SetObjectReference(focusController, "pointAction", point);
@@ -887,13 +1506,47 @@ public static class CS_ShoppingEnvironmentBuilder
         root.transform.SetParent(parent, false);
         root.transform.position = position;
         root.transform.rotation = rotation;
-        CreateCube("Torso", Vector3.zero, new Vector3(0.9f, 1.25f, 0.28f), material, root.transform, true);
-        GameObject left = CreateCube("Sleeve L", new Vector3(-0.62f, 0.27f, 0f), new Vector3(0.45f, 0.86f, 0.28f), material, root.transform, true);
-        left.transform.localRotation = Quaternion.Euler(0f, 0f, -24f);
-        GameObject right = CreateCube("Sleeve R", new Vector3(0.62f, 0.27f, 0f), new Vector3(0.45f, 0.86f, 0.28f), material, root.transform, true);
-        right.transform.localRotation = Quaternion.Euler(0f, 0f, 24f);
-        CreateCylinder("Collar", new Vector3(0f, 0.62f, 0f), new Vector3(0.22f, 0.08f, 0.22f), material, root.transform, true);
+        CreateCube("Model Placeholder", Vector3.zero, new Vector3(0.9f, 1.25f, 0.28f), material, root.transform, true);
         return FinalizeProduct(root, displayName, price);
+    }
+
+    private static bool ReplaceClothingVisualWithPlaceholder(CS_ProductItem product)
+    {
+        if (product == null || product.transform.Find("Model Placeholder") != null)
+        {
+            return false;
+        }
+
+        Transform productTransform = product.transform;
+        bool hasSleeve = productTransform.Find("Sleeve L") != null || productTransform.Find("Sleeve R") != null;
+        bool hasTorso = productTransform.Find("Torso") != null;
+        bool isRackGarment = productTransform.name.StartsWith("Garment ") ||
+                             productTransform.name.StartsWith("Wall Garment ") ||
+                             productTransform.name.StartsWith("Round Garment ");
+        if (!hasSleeve && !hasTorso && !isRackGarment)
+        {
+            return false;
+        }
+
+        Renderer sourceRenderer = product.GetComponentInChildren<Renderer>(true);
+        Material sourceMaterial = sourceRenderer != null ? sourceRenderer.sharedMaterial : null;
+        Vector3 placeholderScale = isRackGarment
+            ? new Vector3(0.48f, 1.1f, 0.16f)
+            : new Vector3(0.9f, 1.25f, 0.28f);
+
+        for (int childIndex = productTransform.childCount - 1; childIndex >= 0; childIndex--)
+        {
+            Object.DestroyImmediate(productTransform.GetChild(childIndex).gameObject);
+        }
+
+        GameObject placeholder = CreateCube("Model Placeholder", Vector3.zero, placeholderScale,
+            sourceMaterial, productTransform, true);
+        SetLayerRecursively(placeholder, ProductLayer);
+        product.Configure(product.ProductName, product.PriceWon,
+            placeholder.GetComponentsInChildren<Collider>(true),
+            placeholder.GetComponentsInChildren<Renderer>(true));
+        EditorUtility.SetDirty(product);
+        return true;
     }
 
     private static CS_ProductItem CreateBagProduct(string displayName, int price, Vector3 position,
@@ -1071,6 +1724,17 @@ public static class CS_ShoppingEnvironmentBuilder
         return material;
     }
 
+    private static Material GetLightDiffuserMaterial()
+    {
+        Color glow = new Color(1f, 0.9f, 0.76f);
+        Material material = GetMaterial("M_LightDiffuser", glow, 0f, 0.4f);
+        material.EnableKeyword("_EMISSION");
+        material.SetColor("_EmissionColor", glow * 2.2f);
+        material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
+        EditorUtility.SetDirty(material);
+        return material;
+    }
+
     private static InputActionReference GetActionReference(InputActionAsset asset, string actionPath)
     {
         if (asset == null)
@@ -1104,6 +1768,30 @@ public static class CS_ShoppingEnvironmentBuilder
         serializedObject.ApplyModifiedPropertiesWithoutUndo();
     }
 
+    private static void SetFloat(Object target, string propertyName, float value)
+    {
+        SerializedObject serializedObject = new SerializedObject(target);
+        SerializedProperty property = serializedObject.FindProperty(propertyName);
+        if (property == null)
+        {
+            Debug.LogError($"ShoppingVR: serialized field '{propertyName}' was not found on {target.name}.");
+            return;
+        }
+
+        property.floatValue = value;
+        serializedObject.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    private static void ValidateFloat(Object target, string propertyName, float expectedValue)
+    {
+        SerializedProperty property = new SerializedObject(target).FindProperty(propertyName);
+        if (property == null || !Mathf.Approximately(property.floatValue, expectedValue))
+        {
+            throw new System.InvalidOperationException(
+                $"ShoppingVR scene validation failed: {target.name}.{propertyName} must be {expectedValue}.");
+        }
+    }
+
     private static void ValidateReferences(Object target, params string[] propertyNames)
     {
         SerializedObject serializedObject = new SerializedObject(target);
@@ -1114,6 +1802,25 @@ public static class CS_ShoppingEnvironmentBuilder
             {
                 throw new System.InvalidOperationException(
                     $"ShoppingVR scene validation failed: {target.name}.{propertyNames[i]} is not connected.");
+            }
+        }
+    }
+
+    private static void ValidateArrayHasReferences(Object target, string propertyName)
+    {
+        SerializedProperty property = new SerializedObject(target).FindProperty(propertyName);
+        if (property == null || !property.isArray || property.arraySize == 0)
+        {
+            throw new System.InvalidOperationException(
+                $"ShoppingVR scene validation failed: {target.name}.{propertyName} is empty.");
+        }
+
+        for (int i = 0; i < property.arraySize; i++)
+        {
+            if (property.GetArrayElementAtIndex(i).objectReferenceValue == null)
+            {
+                throw new System.InvalidOperationException(
+                    $"ShoppingVR scene validation failed: {target.name}.{propertyName}[{i}] is not connected.");
             }
         }
     }

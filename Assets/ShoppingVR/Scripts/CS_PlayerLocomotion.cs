@@ -8,7 +8,7 @@ public sealed class CS_PlayerLocomotion : MonoBehaviour
     [SerializeField] private InputActionReference lookAction;
     [SerializeField] private InputActionReference rightClickAction;
     [SerializeField, Min(0.1f)] private float moveSpeed = 4f;
-    [SerializeField, Min(0.01f)] private float lookSensitivity = 0.08f;
+    [SerializeField, Min(0.01f)] private float lookSensitivity = 0.16f;
     [SerializeField] private Transform viewTransform;
 
     private const float GroundedFallSpeed = -1f;

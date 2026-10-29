@@ -4,9 +4,9 @@ using UnityEngine;
 
 public sealed class CS_ProductPivotTests
 {
-    [TestCase("Studio Tote", true)]
-    [TestCase("Front Left Rack Garment 3", false)]
-    public void SceneProduct_RotatesAroundItsVisualCenter(string productName, bool expectOffsetRoot)
+    [TestCase("Studio Tote")]
+    [TestCase("Front Left Rack Garment 3")]
+    public void SceneProduct_RotatesAroundItsVisualCenter(string productName)
     {
         EditorSceneManager.OpenScene("Assets/ShoppingVR/Scenes/ShoppingEnvironment.unity");
         CS_ProductItem[] products = Resources.FindObjectsOfTypeAll<CS_ProductItem>();
@@ -29,7 +29,8 @@ public sealed class CS_ProductPivotTests
         }
 
         float rootOffset = Vector3.Distance(product.transform.position, visualBounds.center);
-        Assert.That(rootOffset, expectOffsetRoot ? Is.GreaterThan(0.5f) : Is.LessThan(0.5f));
+        Assert.That(rootOffset, Is.LessThan(0.5f),
+            $"{productName} visuals should stay local to their authored display root.");
 
         GameObject anchorObject = new GameObject("Test Focus Anchor");
         try
@@ -60,6 +61,45 @@ public sealed class CS_ProductPivotTests
         {
             Object.DestroyImmediate(anchorObject);
         }
+    }
+
+    [TestCase("Ivory Knit")]
+    [TestCase("Sage Overshirt")]
+    [TestCase("Clay Jacket")]
+    [TestCase("Cream Blouse")]
+    [TestCase("Charcoal Coat")]
+    [TestCase("Studio Tote")]
+    [TestCase("Midnight Shirt")]
+    [TestCase("Sand Cardigan")]
+    [TestCase("Arc Mini Bag")]
+    [TestCase("Terracotta Case")]
+    public void StandaloneProduct_VisualsRemainAtDisplayRoot(string productName)
+    {
+        EditorSceneManager.OpenScene("Assets/ShoppingVR/Scenes/ShoppingEnvironment.unity");
+        CS_ProductItem[] products = Resources.FindObjectsOfTypeAll<CS_ProductItem>();
+        CS_ProductItem product = null;
+        for (int i = 0; i < products.Length; i++)
+        {
+            if (products[i].ProductName == productName && products[i].gameObject.scene.IsValid())
+            {
+                product = products[i];
+                break;
+            }
+        }
+
+        Assert.That(product, Is.Not.Null);
+        Renderer[] renderers = product.GetComponentsInChildren<Renderer>();
+        Assert.That(renderers, Is.Not.Empty);
+        Bounds visualBounds = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+        {
+            visualBounds.Encapsulate(renderers[i].bounds);
+        }
+
+        Assert.That(Mathf.Abs(visualBounds.center.y - product.transform.position.y), Is.LessThan(0.5f),
+            $"{productName} is vertically detached from its display root.");
+        Assert.That(Vector3.Distance(visualBounds.center, product.transform.position), Is.LessThan(0.75f),
+            $"{productName} visuals are detached from their display root.");
     }
 
     [TestCase(0f)]
