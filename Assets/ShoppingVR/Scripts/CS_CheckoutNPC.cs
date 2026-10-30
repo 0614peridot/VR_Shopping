@@ -29,6 +29,7 @@ public sealed class CS_CheckoutNPC : MonoBehaviour
         if (checkoutUI != null)
         {
             checkoutUI.Configure(cartCounter);
+            checkoutUI.BindSpeaker(transform, Camera.main);
         }
     }
 
@@ -78,6 +79,7 @@ public sealed class CS_CheckoutNPC : MonoBehaviour
         if (checkoutUI != null)
         {
             checkoutUI.Configure(cartCounter);
+            checkoutUI.BindSpeaker(transform, player != null ? player.GetComponent<Camera>() : Camera.main);
         }
 
         if (isActiveAndEnabled)

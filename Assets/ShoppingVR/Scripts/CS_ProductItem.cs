@@ -10,6 +10,7 @@ public sealed class CS_ProductItem : MonoBehaviour
     [SerializeField] private Collider[] selectionColliders;
     [SerializeField] private Renderer[] feedbackRenderers;
     [SerializeField] private Color selectedColor = new Color(1f, 0.72f, 0.25f, 1f);
+    [SerializeField] private Color hoverColor = new Color(1f, 0.88f, 0.62f, 1f);
 
     private Transform originalParent;
     private Vector3 originalLocalPosition;
@@ -22,6 +23,7 @@ public sealed class CS_ProductItem : MonoBehaviour
     private bool stateCaptured;
     private MaterialPropertyBlock propertyBlock;
     private Transform focusPivot;
+    private bool hovered;
 
     public string ProductName => productName;
     public int PriceWon => priceWon;
@@ -44,6 +46,7 @@ public sealed class CS_ProductItem : MonoBehaviour
     private void OnDisable()
     {
         // Hierarchy changes are not allowed during deactivation; the focus controller restores the transform.
+        hovered = false;
         SetSelectedVisual(false);
     }
 
@@ -61,17 +64,7 @@ public sealed class CS_ProductItem : MonoBehaviour
 
         CaptureDisplayState();
         CreateFocusPivot(focusAnchor, CalculateVisualCenter());
-
-        if (selectionColliders != null)
-        {
-            for (int i = 0; i < selectionColliders.Length; i++)
-            {
-                if (selectionColliders[i] != null)
-                {
-                    selectionColliders[i].isTrigger = true;
-                }
-            }
-        }
+        SetCollidersAsTriggers();
 
         if (cachedRigidbody != null)
         {
@@ -82,6 +75,32 @@ public sealed class CS_ProductItem : MonoBehaviour
         SetSelectedVisual(true);
     }
 
+    // VR hold: the Interaction SDK Grabbable moves the transform itself, so no focus pivot or reparenting.
+    // Colliders become triggers so the held item cannot block or push the player's locomotion capsule.
+    public void BeginHold()
+    {
+        if (stateCaptured)
+        {
+            return;
+        }
+
+        CaptureDisplayState();
+        SetCollidersAsTriggers();
+        hovered = false;
+        SetSelectedVisual(true);
+    }
+
+    public void SetHovered(bool isHovered)
+    {
+        if (hovered == isHovered || stateCaptured)
+        {
+            return;
+        }
+
+        hovered = isHovered;
+        SetFeedbackColor(isHovered, hoverColor);
+    }
+
     public void RestoreDisplayState()
     {
         if (!stateCaptured)
@@ -90,7 +109,12 @@ public sealed class CS_ProductItem : MonoBehaviour
         }
 
         SetSelectedVisual(false);
-        transform.SetParent(originalParent, false);
+        // Skipping a no-op SetParent lets a VR hold be restored from OnDisable, where hierarchy changes throw.
+        if (transform.parent != originalParent)
+        {
+            transform.SetParent(originalParent, false);
+        }
+
         transform.localPosition = originalLocalPosition;
         transform.localRotation = originalLocalRotation;
         transform.localScale = originalLocalScale;
@@ -120,6 +144,22 @@ public sealed class CS_ProductItem : MonoBehaviour
         }
 
         stateCaptured = false;
+    }
+
+    private void SetCollidersAsTriggers()
+    {
+        if (selectionColliders == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < selectionColliders.Length; i++)
+        {
+            if (selectionColliders[i] != null)
+            {
+                selectionColliders[i].isTrigger = true;
+            }
+        }
     }
 
     private void CreateFocusPivot(Transform focusAnchor, Vector3 visualCenter)
@@ -238,6 +278,11 @@ public sealed class CS_ProductItem : MonoBehaviour
 
     private void SetSelectedVisual(bool selected)
     {
+        SetFeedbackColor(selected, selectedColor);
+    }
+
+    private void SetFeedbackColor(bool enabled, Color color)
+    {
         if (feedbackRenderers == null)
         {
             return;
@@ -256,11 +301,11 @@ public sealed class CS_ProductItem : MonoBehaviour
                 continue;
             }
 
-            if (selected)
+            if (enabled)
             {
                 target.GetPropertyBlock(propertyBlock);
-                propertyBlock.SetColor(BaseColorId, selectedColor);
-                propertyBlock.SetColor(ColorId, selectedColor);
+                propertyBlock.SetColor(BaseColorId, color);
+                propertyBlock.SetColor(ColorId, color);
                 target.SetPropertyBlock(propertyBlock);
             }
             else

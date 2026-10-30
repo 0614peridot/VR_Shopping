@@ -5,6 +5,7 @@ using UnityEngine.UI;
 
 public sealed class CS_CheckoutUIController : MonoBehaviour
 {
+    private static readonly Color BubbleColor = new Color(0.04f, 0.05f, 0.06f, 0.97f);
     private static readonly Vector2 CheckoutButtonPosition = new Vector2(166f, 42f);
     private static readonly Vector2 CheckoutButtonSize = new Vector2(290f, 72f);
     private static readonly Vector2 TotalPosition = new Vector2(166f, 126f);
@@ -33,12 +34,20 @@ public sealed class CS_CheckoutUIController : MonoBehaviour
     [SerializeField] private GameObject thankYouRoot;
     [SerializeField] private Text thankYouText;
     [SerializeField, Min(0.1f)] private float thankYouDuration = 3f;
+    [Header("Spatial Speech")]
+    [SerializeField, Min(0.25f)] private float speechBubbleHeight = 2.15f;
+    [SerializeField] private float speechBubbleSideOffset = 0.35f;
+    [SerializeField, Min(0.0001f)] private float worldCanvasScale = 0.0015f;
 
     private readonly List<GameObject> generatedRows = new List<GameObject>();
     private CS_CartCounter subscribedCart;
     private Coroutine thankYouRoutine;
     private Font uiFont;
     private bool playerInRange;
+    private Transform speaker;
+    private Camera viewCamera;
+    private Canvas spatialCanvas;
+    private RectTransform spatialCanvasRect;
 
     public bool IsReviewOpen => reviewRoot != null && reviewRoot.activeSelf;
     public bool IsThankYouVisible => thankYouRoot != null && thankYouRoot.activeSelf;
@@ -47,11 +56,17 @@ public sealed class CS_CheckoutUIController : MonoBehaviour
     private void Awake()
     {
         uiFont = ResolveFont();
+        EnsureSpatialSpeechCanvas();
         ApplyReviewLayout();
         ApplyEnglishLabels();
         SetActive(promptRoot, false);
         SetActive(reviewRoot, false);
         SetActive(thankYouRoot, false);
+    }
+
+    private void LateUpdate()
+    {
+        UpdateSpatialCanvasTransform();
     }
 
     private void OnEnable()
@@ -88,6 +103,14 @@ public sealed class CS_CheckoutUIController : MonoBehaviour
         RefreshReview();
     }
 
+    public void BindSpeaker(Transform speakerTransform, Camera camera)
+    {
+        speaker = speakerTransform;
+        viewCamera = camera != null ? camera : Camera.main;
+        EnsureSpatialSpeechCanvas();
+        UpdateSpatialCanvasTransform();
+    }
+
     public void ConfigureUI(GameObject prompt, Text promptLabel, Button promptAction, GameObject review,
         RectTransform content, Text emptyLabel, Text totalLabel, Button shopMoreAction, Text shopMoreLabel,
         Button checkoutAction, Text checkoutLabel, GameObject confirmation, Text confirmationLabel)
@@ -107,6 +130,7 @@ public sealed class CS_CheckoutUIController : MonoBehaviour
         thankYouRoot = confirmation;
         thankYouText = confirmationLabel;
         uiFont = ResolveFont();
+        EnsureSpatialSpeechCanvas();
         ApplyReviewLayout();
         ApplyEnglishLabels();
         SetActive(promptRoot, false);
@@ -118,6 +142,100 @@ public sealed class CS_CheckoutUIController : MonoBehaviour
         }
 
         RefreshReview();
+    }
+
+    private void EnsureSpatialSpeechCanvas()
+    {
+        if (spatialCanvas == null)
+        {
+            GameObject canvasObject = new GameObject("Checkout Clerk Spatial Speech", typeof(RectTransform),
+                typeof(Canvas), typeof(GraphicRaycaster));
+            spatialCanvasRect = canvasObject.GetComponent<RectTransform>();
+            spatialCanvasRect.sizeDelta = new Vector2(700f, 360f);
+            spatialCanvasRect.localScale = Vector3.one * worldCanvasScale;
+            spatialCanvas = canvasObject.GetComponent<Canvas>();
+            spatialCanvas.renderMode = RenderMode.WorldSpace;
+            spatialCanvas.sortingOrder = 49;
+        }
+
+        spatialCanvas.worldCamera = viewCamera != null ? viewCamera : Camera.main;
+        MoveSpeechElement(promptRoot, new Vector2(0f, 30f));
+        MoveSpeechElement(thankYouRoot, Vector2.zero);
+        EnsureSpeechTail(promptRoot);
+        EnsureSpeechTail(thankYouRoot);
+    }
+
+    private void MoveSpeechElement(GameObject target, Vector2 position)
+    {
+        if (target == null || spatialCanvasRect == null)
+        {
+            return;
+        }
+
+        RectTransform rect = target.GetComponent<RectTransform>();
+        if (target.transform.parent != spatialCanvasRect)
+        {
+            target.transform.SetParent(spatialCanvasRect, false);
+        }
+
+        if (rect == null)
+        {
+            return;
+        }
+
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = position;
+        rect.localRotation = Quaternion.identity;
+        rect.localScale = Vector3.one;
+    }
+
+    private void UpdateSpatialCanvasTransform()
+    {
+        if (spatialCanvasRect == null || speaker == null)
+        {
+            return;
+        }
+
+        Camera camera = viewCamera != null ? viewCamera : Camera.main;
+        Vector3 side = camera != null
+            ? Vector3.ProjectOnPlane(camera.transform.right, Vector3.up).normalized
+            : Vector3.right;
+        spatialCanvasRect.position = speaker.position + Vector3.up * speechBubbleHeight +
+                                     side * speechBubbleSideOffset;
+        spatialCanvasRect.localScale = Vector3.one * worldCanvasScale;
+
+        if (camera != null)
+        {
+            spatialCanvas.worldCamera = camera;
+            Vector3 awayFromCamera = spatialCanvasRect.position - camera.transform.position;
+            if (awayFromCamera.sqrMagnitude > 0.0001f)
+            {
+                spatialCanvasRect.rotation = Quaternion.LookRotation(awayFromCamera.normalized, Vector3.up);
+            }
+        }
+    }
+
+    private static void EnsureSpeechTail(GameObject bubble)
+    {
+        if (bubble == null || bubble.transform.Find("Speech Tail") != null)
+        {
+            return;
+        }
+
+        GameObject tail = new GameObject("Speech Tail", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        tail.transform.SetParent(bubble.transform, false);
+        RectTransform rect = tail.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 0f);
+        rect.anchorMax = new Vector2(0.5f, 0f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = new Vector2(0f, -14f);
+        rect.sizeDelta = new Vector2(28f, 28f);
+        rect.localRotation = Quaternion.Euler(0f, 0f, 45f);
+        Image image = tail.GetComponent<Image>();
+        image.color = BubbleColor;
+        image.raycastTarget = false;
     }
 
     private void ApplyReviewLayout()

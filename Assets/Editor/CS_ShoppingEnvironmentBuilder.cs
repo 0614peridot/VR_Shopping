@@ -214,7 +214,8 @@ public static class CS_ShoppingEnvironmentBuilder
         CS_PersonalShopperUI personalShopperUI = Object.FindFirstObjectByType<CS_PersonalShopperUI>(FindObjectsInactive.Include);
         EventSystem eventSystem = Object.FindFirstObjectByType<EventSystem>();
 
-        if (!scene.IsValid() || products.Length < 10 || focusController == null || locomotion == null ||
+        if (!scene.IsValid() || products.Length != CS_LuxuryAssortmentBuilder.ProductCount ||
+            focusController == null || locomotion == null ||
             focusUI == null || cart == null || checkoutNPC == null || checkoutUI == null ||
             personalShopper == null || personalShopperUI == null || eventSystem == null)
         {
@@ -332,6 +333,7 @@ public static class CS_ShoppingEnvironmentBuilder
         BuildLeftDisplays(environment.transform, darkMat, metalMat, sageMat, terracottaMat, creamMat);
         BuildCenterDisplays(environment.transform, darkMat, metalMat, sageMat, terracottaMat, creamMat);
         BuildRightWing(environment.transform, wallMat, darkMat, metalMat, sageMat, terracottaMat, creamMat, glassMat);
+        CS_LuxuryAssortmentBuilder.ReplaceGeneratedDisplays(environment.transform);
         BuildNPCVisuals(environment.transform, skinMat, hairMat, darkMat, creamMat, sageMat, terracottaMat, denimMat);
         BuildLighting(environment.transform, darkMat, GetLightDiffuserMaterial());
 
@@ -817,19 +819,24 @@ public static class CS_ShoppingEnvironmentBuilder
         CS_PersonalShopperUI controller = controllerObject.AddComponent<CS_PersonalShopperUI>();
 
         GameObject conversation = CreateUIBox("Shopper Conversation", canvas,
-            new Color(0.04f, 0.05f, 0.06f, 0.98f), new Vector2(0f, -74f), new Vector2(680f, 300f),
-            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
-        Text prompt = CreateUIText("Prompt", conversation.transform, "How can I help?", font, 32,
-            WarmWhite, TextAnchor.MiddleCenter, new Vector2(0f, -48f), new Vector2(-48f, 72f),
+            new Color(0.04f, 0.05f, 0.06f, 0.98f), new Vector2(0f, 28f), new Vector2(680f, 390f),
+            new Vector2(0.5f, 0f), new Vector2(0.5f, 0f));
+        conversation.GetComponent<RectTransform>().pivot = new Vector2(0.5f, 0f);
+        Text prompt = CreateUIText("Prompt", conversation.transform, "Welcome back, my love.\nHow can I help you today?", font, 32,
+            WarmWhite, TextAnchor.MiddleCenter, new Vector2(0f, -20f), new Vector2(-64f, 126f),
             new Vector2(0f, 1f), Vector2.one);
         Button primaryButton = CreateUIButton("Primary Choice", conversation.transform,
-            "Help me choose an outfit!", font, new Vector2(0f, 104f), new Vector2(580f, 70f),
-            new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), Terracotta);
+            "I'LL LOOK AROUND MYSELF", font, new Vector2(0f, 192f), new Vector2(580f, 64f),
+            new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Color(0.12f, 0.13f, 0.15f, 1f));
         Text primaryLabel = primaryButton.transform.Find("Label").GetComponent<Text>();
-        Button secondaryButton = CreateUIButton("Secondary Choice", conversation.transform, "Never mind", font,
-            new Vector2(0f, 28f), new Vector2(580f, 58f), new Vector2(0.5f, 0f),
+        Button secondaryButton = CreateUIButton("Secondary Choice", conversation.transform, "GIVE ME ADVICE", font,
+            new Vector2(0f, 120f), new Vector2(580f, 64f), new Vector2(0.5f, 0f),
             new Vector2(0.5f, 0f), new Color(0.12f, 0.13f, 0.15f, 1f));
         Text secondaryLabel = secondaryButton.transform.Find("Label").GetComponent<Text>();
+        Button tertiaryButton = CreateUIButton("Tertiary Choice", conversation.transform,
+            "SHOW ME YOUR COLLECTIONS", font, new Vector2(0f, 48f), new Vector2(580f, 64f),
+            new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Color(0.12f, 0.13f, 0.15f, 1f));
+        Text tertiaryLabel = tertiaryButton.transform.Find("Label").GetComponent<Text>();
 
         GameObject ambientBubble = CreateUIBox("Shopper Ambient Bubble", canvas,
             new Color(0.04f, 0.05f, 0.06f, 0.94f), new Vector2(34f, 128f), new Vector2(440f, 88f),
@@ -848,7 +855,7 @@ public static class CS_ShoppingEnvironmentBuilder
         CreateSpeechTail(commentBubble.transform, new Vector2(14f, 0f), darkFacingDown: false);
 
         controller.Configure(null, conversation, prompt, primaryButton, primaryLabel, secondaryButton,
-            secondaryLabel, ambientBubble, ambientText, commentBubble, commentText);
+            secondaryLabel, tertiaryButton, tertiaryLabel, ambientBubble, ambientText, commentBubble, commentText);
         conversation.SetActive(false);
         ambientBubble.SetActive(false);
         commentBubble.SetActive(false);
@@ -1029,6 +1036,11 @@ public static class CS_ShoppingEnvironmentBuilder
 
     private static void ApplySavedLayout(Transform environment)
     {
+        if (environment.Find("Luxury Assortment — 38 Items") != null)
+        {
+            return;
+        }
+
         // Preserve the layout adjustments made in the Unity editor when the scene is rebuilt.
         RepairStandaloneProductVisuals(environment);
 

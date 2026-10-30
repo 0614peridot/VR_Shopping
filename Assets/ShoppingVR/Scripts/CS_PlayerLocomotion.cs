@@ -11,8 +11,6 @@ public sealed class CS_PlayerLocomotion : MonoBehaviour
     [SerializeField, Min(0.01f)] private float lookSensitivity = 0.16f;
     [SerializeField] private Transform viewTransform;
 
-    private const float GroundedFallSpeed = -1f;
-    private const float AirborneFallSpeed = -4f;
     private const float PitchLimit = 75f;
 
     private CharacterController characterController;
@@ -70,7 +68,6 @@ public sealed class CS_PlayerLocomotion : MonoBehaviour
         Vector3 forward = Vector3.ProjectOnPlane(viewTransform.forward, Vector3.up).normalized;
         Vector3 right = Vector3.ProjectOnPlane(viewTransform.right, Vector3.up).normalized;
         Vector3 velocity = (forward * input.y + right * input.x) * moveSpeed;
-        velocity.y = characterController.isGrounded ? GroundedFallSpeed : AirborneFallSpeed;
 
         characterController.Move(velocity * Time.deltaTime);
     }

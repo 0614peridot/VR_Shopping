@@ -33,15 +33,52 @@ public sealed class CS_PersonalShopperNPCTests
         CS_PersonalShopperNPC shopper = shopperObject.AddComponent<CS_PersonalShopperNPC>();
 
         Assert.AreEqual(CS_PersonalShopperState.Waiting, shopper.State);
+        Assert.AreEqual(CS_PersonalShopperMode.None, shopper.Mode);
 
         shopper.StartHelping();
         Assert.AreEqual(CS_PersonalShopperState.Following, shopper.State);
+        Assert.AreEqual(CS_PersonalShopperMode.Advice, shopper.Mode);
 
         shopper.KeepHelping();
         Assert.AreEqual(CS_PersonalShopperState.Following, shopper.State);
 
         shopper.StopHelping();
         Assert.AreEqual(CS_PersonalShopperState.Returning, shopper.State);
+        Assert.AreEqual(CS_PersonalShopperMode.None, shopper.Mode);
+    }
+
+    [Test]
+    public void BrowseChoiceCompletesGreetingAndReturnsShopperHome()
+    {
+        shopperObject = new GameObject("Personal Shopper");
+        CS_PersonalShopperNPC shopper = shopperObject.AddComponent<CS_PersonalShopperNPC>();
+
+        shopper.ChooseBrowseAlone();
+
+        Assert.IsTrue(shopper.HasCompletedEntranceGreeting);
+        Assert.AreEqual(CS_PersonalShopperMode.None, shopper.Mode);
+        Assert.AreEqual(CS_PersonalShopperState.Returning, shopper.State);
+    }
+
+    [Test]
+    public void GuideChoiceSelectsAvailableProductsAndStartsGuiding()
+    {
+        shopperObject = new GameObject("Personal Shopper");
+        CS_PersonalShopperNPC shopper = shopperObject.AddComponent<CS_PersonalShopperNPC>();
+        productObject = new GameObject("Guide Products");
+        for (int i = 0; i < 3; i++)
+        {
+            GameObject item = new GameObject($"Guide Product {i + 1}");
+            item.transform.SetParent(productObject.transform);
+            CS_ProductItem product = item.AddComponent<CS_ProductItem>();
+            product.Configure(item.name, 1000 + i, null, null);
+        }
+
+        shopper.ChooseGuideMode();
+
+        Assert.IsTrue(shopper.HasCompletedEntranceGreeting);
+        Assert.AreEqual(CS_PersonalShopperMode.Guide, shopper.Mode);
+        Assert.AreEqual(CS_PersonalShopperState.Guiding, shopper.State);
     }
 
     [TestCase("Evening Dress", "silhouette")]

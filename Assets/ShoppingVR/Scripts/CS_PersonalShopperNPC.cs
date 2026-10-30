@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -29,6 +30,14 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
     [SerializeField, Min(0.5f)] private float minimumPlayerSeparation = 0.9f;
     [SerializeField, Min(0.01f)] private float arrivalDistance = 0.08f;
 
+    [Header("Entrance Greeting")]
+    [SerializeField, Min(0.5f)] private float greetingDistance = 2.2f;
+    [SerializeField, Range(0.55f, 0.9f)] private float greetingViewportX = 0.68f;
+
+    [Header("Guide Mode")]
+    [SerializeField, Range(1, 10)] private int guideItemCount = 3;
+    [SerializeField, Min(0.5f)] private float guideProductDistance = 1.4f;
+
     [Header("Speech")]
     [SerializeField, Min(1f)] private float ambientInterval = 30f;
     [SerializeField, Min(0.5f)] private float ambientDuration = 4f;
@@ -36,9 +45,18 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
     [SerializeField] private CS_ProductFocusController productFocusController;
 
     private CS_PersonalShopperState state;
+    private CS_PersonalShopperMode mode;
     private Vector3 homePosition;
     private Quaternion homeRotation;
+    private CS_PlayerLocomotion playerLocomotion;
+    private readonly List<CS_ProductItem> guideProducts = new List<CS_ProductItem>();
     private CS_ProductItem commentedProduct;
+    private int guideProductIndex;
+    private bool isStoppedAtGuideProduct;
+    private bool entranceGreetingStarted;
+    private bool entranceGreetingCompleted;
+    private bool entranceConversationShown;
+    private bool movementWasEnabledBeforeGreeting = true;
     private float ambientTimer;
     private float ambientVisibleTimer;
     private bool pressRequested;
@@ -49,8 +67,12 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
     private Texture2D talkCursorTexture;
 
     public CS_PersonalShopperState State => state;
+    public CS_PersonalShopperMode Mode => mode;
     public bool IsConversationOpen => shopperUI != null && shopperUI.IsConversationOpen;
+    public bool HasCompletedEntranceGreeting => entranceGreetingCompleted;
+    public bool IsWaitingAtGuideItem => mode == CS_PersonalShopperMode.Guide && isStoppedAtGuideProduct;
     public Vector3 HomePosition => homePosition;
+    public Camera UserCamera => userCamera;
 
     public void Configure(Transform playerTransform, Camera camera, CS_PersonalShopperUI ui,
         CS_ProductFocusController focusController, InputActionReference point, InputActionReference click,
@@ -72,6 +94,7 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
         homePosition = transform.position;
         homeRotation = transform.rotation;
         state = CS_PersonalShopperState.Waiting;
+        mode = CS_PersonalShopperMode.None;
         ambientTimer = ambientInterval;
 
         if (interactionColliders == null || interactionColliders.Length == 0)
@@ -88,6 +111,7 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
             enabled = false;
         }
 
+        playerLocomotion = player != null ? player.GetComponent<CS_PlayerLocomotion>() : null;
         shopperUI?.BindShopper(this);
     }
 
@@ -121,6 +145,11 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
         if (shopperUI != null)
         {
             shopperUI.HideAll();
+        }
+
+        if (entranceGreetingStarted && !entranceGreetingCompleted && playerLocomotion != null)
+        {
+            playerLocomotion.SetMovementEnabled(movementWasEnabledBeforeGreeting);
         }
     }
 
@@ -159,7 +188,18 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
         }
 
         shopperUI.HideProductComment();
-        if (state == CS_PersonalShopperState.Following)
+        if (!entranceGreetingCompleted)
+        {
+            if (state == CS_PersonalShopperState.Approaching)
+            {
+                shopperUI.ShowInitialConversation();
+                entranceConversationShown = true;
+            }
+
+            return;
+        }
+
+        if (mode != CS_PersonalShopperMode.None)
         {
             shopperUI.ShowFollowingConversation();
         }
@@ -169,34 +209,112 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
         }
     }
 
-    public void StartHelping()
+    public void BeginEntranceGreeting()
     {
+        if (entranceGreetingStarted || entranceGreetingCompleted || player == null || shopperUI == null)
+        {
+            return;
+        }
+
+        entranceGreetingStarted = true;
+        entranceConversationShown = false;
+        mode = CS_PersonalShopperMode.None;
+        state = CS_PersonalShopperState.Approaching;
+        shopperUI.HideAll();
+        if (playerLocomotion != null)
+        {
+            movementWasEnabledBeforeGreeting = playerLocomotion.MovementEnabled;
+            playerLocomotion.SetMovementEnabled(false);
+        }
+    }
+
+    public void ChooseBrowseAlone()
+    {
+        CompleteEntranceGreetingIfNeeded();
+        mode = CS_PersonalShopperMode.None;
+        state = CS_PersonalShopperState.Returning;
+        commentedProduct = null;
+        shopperUI?.HideConversation();
+        ShowTimedAmbient("Of course. Whenever you need help, I'll be right here.");
+    }
+
+    public void ChooseAdviceMode()
+    {
+        CompleteEntranceGreetingIfNeeded();
+        mode = CS_PersonalShopperMode.Advice;
         state = CS_PersonalShopperState.Following;
         commentedProduct = null;
         shopperUI?.HideConversation();
-        ScheduleNextAmbient();
+        ShowTimedAmbient("By all means, ask me anything.");
+    }
+
+    public void ChooseGuideMode()
+    {
+        CompleteEntranceGreetingIfNeeded();
+        mode = CS_PersonalShopperMode.Guide;
+        commentedProduct = null;
+        BuildGuideProductList();
+        shopperUI?.HideConversation();
+
+        if (guideProducts.Count == 0)
+        {
+            mode = CS_PersonalShopperMode.None;
+            state = CS_PersonalShopperState.Returning;
+            ShowTimedAmbient("I couldn't find a collection to show right now, darling.");
+            return;
+        }
+
+        state = CS_PersonalShopperState.Guiding;
+        ShowTimedAmbient("Of course. Follow me, darling.");
+    }
+
+    public void StopCurrentMode()
+    {
+        CompleteEntranceGreetingIfNeeded();
+        mode = CS_PersonalShopperMode.None;
+        state = CS_PersonalShopperState.Returning;
+        commentedProduct = null;
+        guideProducts.Clear();
+        isStoppedAtGuideProduct = false;
+        shopperUI?.HideConversation();
+        shopperUI?.HideProductComment();
+        ShowTimedAmbient("Of course, my love. I'll give you some space.");
+    }
+
+    public void ContinueCurrentMode()
+    {
+        shopperUI?.HideConversation();
+    }
+
+    public void ContinueGuide()
+    {
+        if (mode != CS_PersonalShopperMode.Guide || !isStoppedAtGuideProduct)
+        {
+            return;
+        }
+
+        shopperUI?.HideConversation();
+        AdvanceGuide();
+    }
+
+    public void StartHelping()
+    {
+        ChooseAdviceMode();
     }
 
     public void KeepHelping()
     {
-        shopperUI?.HideConversation();
+        ContinueCurrentMode();
     }
 
     public void DeclineHelp()
     {
-        shopperUI?.HideConversation();
-        ScheduleNextAmbient();
+        ChooseBrowseAlone();
     }
 
     public void StopHelping()
     {
-        state = CS_PersonalShopperState.Returning;
-        commentedProduct = null;
-        if (shopperUI != null)
-        {
-            shopperUI.HideConversation();
-            shopperUI.HideProductComment();
-        }
+        StopCurrentMode();
     }
 
     public static string BuildProductComment(CS_ProductItem product)
@@ -269,12 +387,27 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
             return;
         }
 
-        if (state == CS_PersonalShopperState.Following)
+        if (state == CS_PersonalShopperState.Approaching)
+        {
+            Vector3 target = CalculateCameraRelativeFollowTarget(player.position, userCamera,
+                greetingDistance, greetingViewportX);
+            target.y = transform.position.y;
+            if (MoveToward(target, false, true) && !entranceConversationShown)
+            {
+                entranceConversationShown = true;
+                shopperUI.ShowInitialConversation();
+            }
+        }
+        else if (state == CS_PersonalShopperState.Following)
         {
             Vector3 target = CalculateCameraRelativeFollowTarget(player.position, userCamera,
                 followDistance, followViewportX);
             target.y = transform.position.y;
             MoveToward(target, false, true);
+        }
+        else if (state == CS_PersonalShopperState.Guiding)
+        {
+            UpdateGuideMovement();
         }
         else if (state == CS_PersonalShopperState.Returning && MoveToward(homePosition, true, false))
         {
@@ -344,7 +477,7 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
             }
         }
 
-        if (state != CS_PersonalShopperState.Waiting || shopperUI.IsConversationOpen)
+        if (!entranceGreetingCompleted || state != CS_PersonalShopperState.Waiting || shopperUI.IsConversationOpen)
         {
             return;
         }
@@ -362,7 +495,7 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
 
     private void UpdateProductComment()
     {
-        if (shopperUI == null || productFocusController == null || state != CS_PersonalShopperState.Following)
+        if (shopperUI == null || productFocusController == null || mode != CS_PersonalShopperMode.Advice)
         {
             if (commentedProduct != null)
             {
@@ -512,6 +645,106 @@ public sealed class CS_PersonalShopperNPC : MonoBehaviour
     private void HandleClickCanceled(InputAction.CallbackContext context)
     {
         clickPressed = false;
+    }
+
+    private void CompleteEntranceGreetingIfNeeded()
+    {
+        if (entranceGreetingCompleted)
+        {
+            return;
+        }
+
+        entranceGreetingCompleted = true;
+        entranceConversationShown = false;
+        if (playerLocomotion != null)
+        {
+            playerLocomotion.SetMovementEnabled(movementWasEnabledBeforeGreeting);
+        }
+    }
+
+    private void BuildGuideProductList()
+    {
+        guideProducts.Clear();
+        guideProductIndex = 0;
+        isStoppedAtGuideProduct = false;
+
+        CS_ProductItem[] products = FindObjectsByType<CS_ProductItem>(FindObjectsInactive.Exclude);
+        int count = Mathf.Min(guideItemCount, products.Length);
+        for (int i = 0; i < count; i++)
+        {
+            int selectedIndex = UnityEngine.Random.Range(i, products.Length);
+            (products[i], products[selectedIndex]) = (products[selectedIndex], products[i]);
+            guideProducts.Add(products[i]);
+        }
+    }
+
+    private void UpdateGuideMovement()
+    {
+        if (guideProductIndex >= guideProducts.Count)
+        {
+            FinishGuide();
+            return;
+        }
+
+        CS_ProductItem product = guideProducts[guideProductIndex];
+        if (product == null || !product.isActiveAndEnabled)
+        {
+            AdvanceGuide();
+            return;
+        }
+
+        if (isStoppedAtGuideProduct)
+        {
+            RotateToward(player != null ? player.position - transform.position : Vector3.zero, false);
+            return;
+        }
+
+        Vector3 productPosition = product.transform.position;
+        Vector3 awayFromProduct = transform.position - productPosition;
+        awayFromProduct.y = 0f;
+        if (awayFromProduct.sqrMagnitude < 0.0001f)
+        {
+            awayFromProduct = Vector3.back;
+        }
+
+        Vector3 target = productPosition + awayFromProduct.normalized * guideProductDistance;
+        target.y = transform.position.y;
+        if (!MoveToward(target, false, false))
+        {
+            return;
+        }
+
+        isStoppedAtGuideProduct = true;
+        shopperUI?.ShowGuideItem(BuildProductComment(product), guideProductIndex < guideProducts.Count - 1);
+    }
+
+    private void AdvanceGuide()
+    {
+        shopperUI?.HideProductComment();
+        guideProductIndex++;
+        isStoppedAtGuideProduct = false;
+        if (guideProductIndex >= guideProducts.Count)
+        {
+            FinishGuide();
+        }
+    }
+
+    private void FinishGuide()
+    {
+        guideProducts.Clear();
+        mode = CS_PersonalShopperMode.None;
+        state = CS_PersonalShopperState.Returning;
+        isStoppedAtGuideProduct = false;
+        shopperUI?.HideConversation();
+        shopperUI?.HideProductComment();
+        ShowTimedAmbient("Those are my three picks. Take your time, darling.");
+    }
+
+    private void ShowTimedAmbient(string message)
+    {
+        shopperUI?.ShowAmbient(message);
+        ambientVisibleTimer = ambientDuration;
+        ScheduleNextAmbient();
     }
 
     private void ScheduleNextAmbient()
